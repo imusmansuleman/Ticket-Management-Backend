@@ -1,4 +1,3 @@
-
 # Ticket Management System — Backend
 
 A RESTful API built with FastAPI for managing support tickets, user assignments, comments, and ticket activity history.
@@ -40,7 +39,7 @@ A RESTful API built with FastAPI for managing support tickets, user assignments,
 
 ## Project Structure
 
-    Ticket-System/
+    Ticket-Management-Backend/
     ├── app/
     │   ├── core/
     │   ├── db/
@@ -59,8 +58,8 @@ A RESTful API built with FastAPI for managing support tickets, user assignments,
 
 ### 1. Clone the Repository
 
-    git clone YOUR_REPOSITORY_URL
-    cd YOUR_REPOSITORY_FOLDER
+    git clone https://github.com/imusmansuleman/Ticket-Management-Backend.git
+    cd Ticket-Management-Backend
 
 ### 2. Create a Virtual Environment
 
@@ -73,12 +72,20 @@ A RESTful API built with FastAPI for managing support tickets, user assignments,
 
 ### 4. Configure Environment Variables
 
-Create a `.env` file in the project root.
+Create a `.env` file in the project root and add:
 
-Configure the JWT secret and PostgreSQL connection
-variables required by the application.
+```env
+SECRET_KEY=your_secret_key_here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 
-Never commit the `.env` file.
+DB_USERNAME=postgres
+DB_PASSWORD=your_password_here
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=your_database_name
+
+
 
 ### 5. Run Database Migrations
 
