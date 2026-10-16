@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.schemas.ticket_history import TicketHistoryResponse
 from app.db.database import get_db
-from app.models.models import User, Ticket, TicketHistory, UserRole
+from app.models.models import User
 from app.schemas.ticket import (
     TicketCreate,
     TicketAssign,
@@ -35,6 +34,28 @@ def create_ticket(
         ticket_data,
         current_user.id
     )
+# @router.post("/")
+# def create_ticket(
+#     ticket_data: TicketCreate,
+#     db: Session = Depends(get_db)
+# ):
+#     ticket = Ticket(
+#         category=ticket_data.category,
+#         status=ticket_data.status,
+#         priority=ticket_data.priority,
+#         created_by_id=ticket_data.created_by_id,
+#         assignee_id=ticket_data.assignee_id,
+#         title=ticket_data.title,
+#         description=ticket_data.description,
+#         due_date=ticket_data.due_date
+#     )
+#     # SERIALIZE
+
+#     db.add(ticket)
+#     db.commit()
+#     db.refresh(ticket)
+
+#     return ticket
 
 
 # 2. Admin assigns a ticket to an engineer
@@ -151,30 +172,28 @@ def change_ticket_status(
         "status": ticket.status.value
     }
 
+# 6. endpoint to retrieve all tickets
+@router.get("/")
+def get_all_tickets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    return ticket_service.get_all_tickets(db)
 
 
+# 7. Endpoint to retrieve a ticket by ID
+@router.get("/{ticket_id}")
+def get_ticket_by_id(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    ticket = ticket_service.get_ticket_by_id(db, ticket_id)
 
+    if not ticket:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
 
-
-# @router.post("/")
-# def create_ticket(
-#     ticket_data: TicketCreate,
-#     db: Session = Depends(get_db)
-# ):
-#     ticket = Ticket(
-#         category=ticket_data.category,
-#         status=ticket_data.status,
-#         priority=ticket_data.priority,
-#         created_by_id=ticket_data.created_by_id,
-#         assignee_id=ticket_data.assignee_id,
-#         title=ticket_data.title,
-#         description=ticket_data.description,
-#         due_date=ticket_data.due_date
-#     )
-#     # SERIALIZE
-
-#     db.add(ticket)
-#     db.commit()
-#     db.refresh(ticket)
-
-#     return ticket
+    return ticket

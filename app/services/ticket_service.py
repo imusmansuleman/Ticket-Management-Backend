@@ -1,4 +1,3 @@
-
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -6,7 +5,7 @@ from app.services.ticket_history_service import create_history
 from app.models.models import Ticket, TicketStatus, User, UserRole
 from app.schemas.ticket import TicketCreate
 
-
+# 1. Employee creates a ticket
 def create_ticket(
     db: Session,
     ticket_data: TicketCreate,
@@ -69,19 +68,7 @@ def create_ticket(
 
 #     return ticket
 
-
-# get_my_created_tickets by employee
-def get_my_created_tickets(
-    db: Session,
-    employee_id: int
-):
-    tickets = db.query(Ticket).filter(
-        Ticket.created_by_id == employee_id
-    ).all()
-
-    return tickets
-
-
+# 2. Admin assigns a ticket to an engineer
 def assign_ticket(
     db: Session,
     ticket_id: int,
@@ -137,6 +124,20 @@ def assign_ticket(
     return ticket, None
 
 
+# 3. get_my_created_tickets by employee
+def get_my_created_tickets(
+    db: Session,
+    employee_id: int
+):
+    tickets = db.query(Ticket).filter(
+        Ticket.created_by_id == employee_id
+    ).all()
+
+    return tickets
+
+
+
+# 4. Engineer views their assigned tickets
 def get_assigned_tickets(
     db: Session,
     engineer_id: int
@@ -148,6 +149,7 @@ def get_assigned_tickets(
     return tickets
 
 
+# 5. Engineer/Admin updates ticket status
 def update_ticket_status(
     db: Session,
     ticket_id: int,
@@ -217,3 +219,9 @@ def update_ticket_status(
 
     db.refresh(ticket)
     return ticket, None
+# 6. endpoint to retrieve all tickets
+def get_all_tickets(db: Session):
+    return db.query(Ticket).order_by(Ticket.id.desc()).all()
+# 7. Endpoint to retrieve a ticket by ID
+def get_ticket_by_id(db: Session, ticket_id: int):
+    return db.query(Ticket).filter(Ticket.id == ticket_id).first()
