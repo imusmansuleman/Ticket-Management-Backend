@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-
+from app.services import ticket_history_service
 from app.db.database import get_db
 from app.models.models import User, Ticket, TicketHistory, UserRole
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import require_admin
 from app.schemas.ticket_history import TicketHistoryResponse
 
 
@@ -13,6 +13,20 @@ router = APIRouter(
 )
 
 
+# 1. Admin gets history of all tickets
+@router.get(
+    "/history/all",
+    response_model=list[TicketHistoryResponse]
+)
+def get_all_ticket_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    return ticket_history_service.get_all_ticket_history(db)
+
+
+
+# 2. Admin gets history of a specific ticket
 @router.get(
     "/{ticket_id}/history",
     response_model=list[TicketHistoryResponse]
@@ -20,35 +34,19 @@ router = APIRouter(
 def get_ticket_history(
     ticket_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_admin)
 ):
-    ticket = db.query(Ticket).filter(
-        Ticket.id == ticket_id
-    ).first()
+    history = ticket_history_service.get_ticket_history(
+        db=db,
+        ticket_id=ticket_id
+    )
 
-    if ticket is None:
+    if history is None:
         raise HTTPException(
             status_code=404,
             detail="Ticket not found"
         )
 
-    allowed = (
-        current_user.role == UserRole.ADMIN
-        or ticket.created_by_id == current_user.id
-        or ticket.assignee_id == current_user.id
-    )
-
-    if not allowed:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot view this ticket's history"
-        )
-
-    history = db.query(TicketHistory).filter(
-        TicketHistory.ticket_id == ticket_id
-    ).order_by(
-        TicketHistory.created_at.asc(),
-        TicketHistory.id.asc()
-    ).all()
-
     return history
+
+  

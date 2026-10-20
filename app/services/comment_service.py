@@ -1,9 +1,28 @@
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timezone
-from app.schemas.comment import CommentUpdate
-from app.models.models import Comment, Ticket, TicketStatus, User, UserRole
-from app.schemas.comment import CommentCreate
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.models.models import (
+    Comment,
+    Ticket,
+    TicketStatus,
+    User,
+    UserRole
+)
+from app.schemas.comment import CommentCreate, CommentUpdate
+
+
+def can_access_ticket(ticket: Ticket, current_user: User) -> bool:
+    if current_user.role == UserRole.ADMIN:
+        return True
+
+    if current_user.role == UserRole.EMPLOYEE:
+        return ticket.created_by_id == current_user.id
+
+    if current_user.role == UserRole.ENGINEER:
+        return ticket.assignee_id == current_user.id
+
+    return False
 
 
 def create_comment(
@@ -12,48 +31,40 @@ def create_comment(
     comment_data: CommentCreate,
     current_user: User
 ):
-    ticket = db.query(Ticket).filter(
-        Ticket.id == ticket_id
-    ).first()
-
-    if ticket is None:
-        return None, "ticket_not_found"
-
-    # Closed tickets cannot receive new comments
-    if ticket.status == TicketStatus.CLOSED:
-        return None, "ticket_closed"
-
-    # Check whether the current user can comment
-    allowed = (
-        current_user.role == UserRole.ADMIN
-        or ticket.created_by_id == current_user.id
-        or ticket.assignee_id == current_user.id
-    )
-
-    if not allowed:
-        return None, "permission_denied"
-
-    comment = Comment(
-        ticket_id=ticket.id,
-        author_id=current_user.id,
-        content=comment_data.content
-    )
-
     try:
+        ticket = db.query(Ticket).filter(
+            Ticket.id == ticket_id,
+            Ticket.is_deleted.is_(False)
+        ).with_for_update().first()
+
+        if ticket is None:
+            db.rollback()
+            return None, "ticket_not_found"
+
+        if not can_access_ticket(ticket, current_user):
+            db.rollback()
+            return None, "permission_denied"
+
+        if ticket.status == TicketStatus.CLOSED:
+            db.rollback()
+            return None, "ticket_closed"
+
+        comment = Comment(
+            ticket_id=ticket.id,
+            author_id=current_user.id,
+            content=comment_data.content
+        )
+
         db.add(comment)
         db.commit()
+        db.refresh(comment)
+
+        return comment, None
 
     except SQLAlchemyError:
         db.rollback()
         raise
 
-    db.refresh(comment)
-
-    return comment, None
-  #None: Indicates there was no business-rule error.
-  
-  
-  
 
 def get_ticket_comments(
     db: Session,
@@ -62,19 +73,14 @@ def get_ticket_comments(
     mine: bool = False
 ):
     ticket = db.query(Ticket).filter(
-        Ticket.id == ticket_id
+        Ticket.id == ticket_id,
+        Ticket.is_deleted.is_(False)
     ).first()
 
     if ticket is None:
         return None, "ticket_not_found"
 
-    allowed = (
-        current_user.role == UserRole.ADMIN
-        or ticket.created_by_id == current_user.id
-        or ticket.assignee_id == current_user.id
-    )
-
-    if not allowed:
+    if not can_access_ticket(ticket, current_user):
         return None, "permission_denied"
 
     query = db.query(Comment).filter(
@@ -93,7 +99,6 @@ def get_ticket_comments(
 
     return comments, None
 
-  
 
 def update_comment(
     db: Session,
@@ -101,78 +106,112 @@ def update_comment(
     comment_data: CommentUpdate,
     current_user: User
 ):
-    comment = db.query(Comment).filter(
-        Comment.id == comment_id
-    ).first()
-
-    if comment is None:
-        return None, "comment_not_found"
-
-    if comment.author_id != current_user.id:
-        return None, "permission_denied"
-
-    if comment.ticket.status == TicketStatus.CLOSED:
-        return None, "ticket_closed"
-
-    comment.content = comment_data.content
-    comment.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-
     try:
+        comment = db.query(Comment).filter(
+            Comment.id == comment_id
+        ).with_for_update().first()
+
+        if comment is None:
+            db.rollback()
+            return None, "comment_not_found"
+
+        ticket = db.query(Ticket).filter(
+            Ticket.id == comment.ticket_id
+        ).with_for_update().first()
+
+        if ticket is None or ticket.is_deleted:
+            db.rollback()
+            return None, "comment_not_found"
+
+        if (
+            comment.author_id != current_user.id
+            or not can_access_ticket(ticket, current_user)
+        ):
+            db.rollback()
+            return None, "permission_denied"
+
+        if ticket.status == TicketStatus.CLOSED:
+            db.rollback()
+            return None, "ticket_closed"
+
+        comment.content = comment_data.content
+        comment.updated_at = datetime.now(timezone.utc)
+
         db.commit()
+        db.refresh(comment)
+
+        return comment, None
 
     except SQLAlchemyError:
         db.rollback()
         raise
 
-    db.refresh(comment)
 
-    return comment, None
-  
-  
-  
+
 def delete_comment(
     db: Session,
     comment_id: int,
     current_user: User
 ):
-    comment = db.query(Comment).filter(
-        Comment.id == comment_id
-    ).first()
-
-    if comment is None:
-        return "comment_not_found"
-
-    if comment.author_id != current_user.id:
-        return "permission_denied"
-
-    if comment.ticket.status == TicketStatus.CLOSED:
-        return "ticket_closed"
-
     try:
+        comment = db.query(Comment).filter(
+            Comment.id == comment_id
+        ).with_for_update().first()
+
+        if comment is None:
+            db.rollback()
+            return "comment_not_found"
+
+        ticket = db.query(Ticket).filter(
+            Ticket.id == comment.ticket_id
+        ).with_for_update().first()
+
+        if ticket is None or ticket.is_deleted:
+            db.rollback()
+            return "comment_not_found"
+
+        is_admin = current_user.role == UserRole.ADMIN
+        is_author = comment.author_id == current_user.id
+
+        if not (is_admin or is_author):
+            db.rollback()
+            return "permission_denied"
+
+        if not is_admin and not can_access_ticket(
+            ticket, current_user
+        ):
+            db.rollback()
+            return "permission_denied"
+
+        if ticket.status == TicketStatus.CLOSED and not is_admin:
+            db.rollback()
+            return "ticket_closed"
+
         db.delete(comment)
         db.commit()
+
+        return None
 
     except SQLAlchemyError:
         db.rollback()
         raise
 
-    return None
-  
-  
-# getting all the comments of a user
+
+
 def get_my_comments(
     db: Session,
     current_user: User
 ):
-    comments = (
+    return (
         db.query(Comment)
-        .filter(Comment.author_id == current_user.id)
+        .join(Ticket, Comment.ticket_id == Ticket.id)
+        .filter(
+            Comment.author_id == current_user.id,
+            Ticket.is_deleted.is_(False)
+        )
         .order_by(
             Comment.created_at.desc(),
             Comment.id.desc()
         )
         .all()
     )
-
-    return comments
-

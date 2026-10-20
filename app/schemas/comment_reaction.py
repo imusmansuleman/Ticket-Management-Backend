@@ -15,7 +15,7 @@ class CommentReactionResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-    
+
 
 class CommentReactionsListResponse(BaseModel):
     comment_id: int
@@ -23,4 +23,3 @@ class CommentReactionsListResponse(BaseModel):
     thumbs_up_count: int
     thumbs_down_count: int
     reactions: list[CommentReactionResponse]
-

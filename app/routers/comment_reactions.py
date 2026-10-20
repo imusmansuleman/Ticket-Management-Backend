@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -62,7 +61,6 @@ def add_or_update_reaction(
     return reaction
 
 
-
 @router.get(
     "/{comment_id}/reactions",
     response_model=CommentReactionsListResponse
@@ -91,8 +89,7 @@ def get_reactions(
         )
 
     return result
-  
-  
+
 
 @router.delete(
     "/{comment_id}/reactions",
@@ -134,4 +131,3 @@ def remove_reaction(
         )
 
     return None
-

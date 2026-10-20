@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.dependencies.auth import get_current_user
 from app.models.models import User
 from app.schemas.ticket import (
     TicketCreate,
     TicketAssign,
-    TicketStatusUpdate
+    TicketStatusUpdate,
+    TicketResponse
 )
 from app.dependencies.auth import (
     require_employee,
@@ -20,6 +22,15 @@ router = APIRouter(
     prefix="/tickets",
     tags=["Tickets"]
 )
+
+# 9. Endpoint to retrieve a deleted ticket
+@router.get("/deleted", response_model=list[TicketResponse])
+def get_deleted_tickets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    return ticket_service.get_deleted_tickets(db)
+
 
 
 # 1. Employee creates a ticket
@@ -197,3 +208,38 @@ def get_ticket_by_id(
         )
 
     return ticket
+
+
+# 8. DELETE ENDPOINT
+@router.delete("/{ticket_id}")
+def delete_ticket(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ticket, error = ticket_service.delete_ticket(
+        db=db,
+        ticket_id=ticket_id,
+        current_user=current_user
+    )
+
+    if error == "ticket_not_found":
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if error == "already_deleted":
+        raise HTTPException(status_code=409, detail="Ticket already deleted")
+
+    if error == "permission_denied":
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    if error == "deletion_not_allowed":
+        raise HTTPException(
+            status_code=409,
+            detail="Only OPEN and unassigned tickets can be deleted"
+        )
+
+    return {
+        "message": "Ticket deleted successfully",
+        "ticket_id": ticket.id
+    }
+

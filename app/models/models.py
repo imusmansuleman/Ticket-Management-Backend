@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
+from sqlalchemy import Boolean, DateTime
 
 from app.db.database import Base
 
@@ -238,6 +239,23 @@ class Ticket(Base):
     history: Mapped[list["TicketHistory"]] = relationship(
         back_populates="ticket"
     )
+    
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default="false"
+)
+
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+)
+
+    deleted_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True
+) 
 
 
 # =========================================================

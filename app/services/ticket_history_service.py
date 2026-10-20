@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models.models import TicketHistory
+from app.models.models import TicketHistory, Ticket
 
 #defines a reusable Python function.
 def create_history(
@@ -26,3 +26,29 @@ def create_history(
     db.add(history)
 
     return history
+  
+# 1. Get history of a specific ticket
+def get_ticket_history(
+    db: Session,
+    ticket_id: int
+):
+    ticket = db.query(Ticket).filter(
+        Ticket.id == ticket_id
+    ).first()
+
+    if ticket is None:
+        return None
+
+    return db.query(TicketHistory).filter(
+        TicketHistory.ticket_id == ticket_id
+    ).order_by(
+        TicketHistory.created_at.asc(),
+        TicketHistory.id.asc()
+    ).all()
+
+# 2. Get history of all tickets
+def get_all_ticket_history(db: Session):
+    return db.query(TicketHistory).order_by(
+        TicketHistory.created_at.desc(),
+        TicketHistory.id.desc()
+    ).all()

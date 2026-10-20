@@ -1,10 +1,8 @@
 from logging.config import fileConfig
-
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-
+from app.models import models
 from alembic import context
-
 from app.db.database import Base, DATABASE_URL
 
 
@@ -19,7 +17,8 @@ config.set_main_option(
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = Base.metadata 
+print("ALEMBIC TABLES:", list(target_metadata.tables.keys()))
 
 
 

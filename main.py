@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.routers import users, tickets, auth
-from app.routers import comments, comment_reactions
+from app.routers import comments, comment_reactions, ticket_history
 
 
 # Base.metadata.create_all(bind=engine)
@@ -11,6 +11,7 @@ print("Tables created successfully")
 app = FastAPI()
 
 app.include_router(users.router)
+app.include_router(ticket_history.router)
 app.include_router(tickets.router)
 app.include_router(auth.router)
 app.include_router(comments.router)

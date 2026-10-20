@@ -1,17 +1,17 @@
-
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from app.models.models import ReactionType
 
 from app.models.models import (
     Comment,
     CommentReaction,
+    ReactionType,
+    Ticket,
     TicketStatus,
-    User,
-    UserRole
+    User
 )
 
 from app.schemas.comment_reaction import CommentReactionCreate
+from app.services.comment_service import can_access_ticket
 
 
 def create_or_update_reaction(
@@ -20,46 +20,37 @@ def create_or_update_reaction(
     reaction_data: CommentReactionCreate,
     current_user: User
 ):
-    # Step 1: Find the comment
-    comment = db.query(Comment).filter(
-        Comment.id == comment_id
-    ).first()
-
-    if comment is None:
-        return None, "comment_not_found"
-
-    # Step 2: Get the associated ticket
-    ticket = comment.ticket
-
-    # Step 3: Check ticket permissions
-    allowed = (
-        current_user.role == UserRole.ADMIN
-        or (
-            current_user.role == UserRole.EMPLOYEE
-            and ticket.created_by_id == current_user.id
-        )
-        or (
-            current_user.role == UserRole.ENGINEER
-            and ticket.assignee_id == current_user.id
-        )
-    )
-
-    if not allowed:
-        return None, "permission_denied"
-
-    # Step 4: Check ticket status
-    if ticket.status == TicketStatus.CLOSED:
-        return None, "ticket_closed"
-
-    # Step 5: Check for an existing reaction
-    reaction = db.query(CommentReaction).filter(
-        CommentReaction.comment_id == comment_id,
-        CommentReaction.user_id == current_user.id
-    ).first()
-
     try:
+        comment = db.query(Comment).filter(
+            Comment.id == comment_id
+        ).first()
+
+        if comment is None:
+            return None, "comment_not_found"
+
+        ticket = db.query(Ticket).filter(
+            Ticket.id == comment.ticket_id,
+            Ticket.is_deleted.is_(False)
+        ).with_for_update().first()
+
+        if ticket is None:
+            db.rollback()
+            return None, "comment_not_found"
+
+        if not can_access_ticket(ticket, current_user):
+            db.rollback()
+            return None, "permission_denied"
+
+        if ticket.status == TicketStatus.CLOSED:
+            db.rollback()
+            return None, "ticket_closed"
+
+        reaction = db.query(CommentReaction).filter(
+            CommentReaction.comment_id == comment_id,
+            CommentReaction.user_id == current_user.id
+        ).first()
+
         if reaction is None:
-            # Create a new reaction
             reaction = CommentReaction(
                 comment_id=comment_id,
                 user_id=current_user.id,
@@ -69,19 +60,16 @@ def create_or_update_reaction(
             db.add(reaction)
 
         else:
-            # Update the existing reaction
             reaction.reaction_type = reaction_data.reaction_type
 
         db.commit()
+        db.refresh(reaction)
+
+        return reaction, None
 
     except SQLAlchemyError:
         db.rollback()
         raise
-
-    db.refresh(reaction)
-
-    return reaction, None
-
 
 
 def get_comment_reactions(
@@ -89,36 +77,19 @@ def get_comment_reactions(
     comment_id: int,
     current_user: User
 ):
-    # Step 1: Find the comment
-    comment = db.query(Comment).filter(
-        Comment.id == comment_id
+    comment = db.query(Comment).join(
+        Ticket, Comment.ticket_id == Ticket.id
+    ).filter(
+        Comment.id == comment_id,
+        Ticket.is_deleted.is_(False)
     ).first()
 
     if comment is None:
         return None, "comment_not_found"
 
-    # Step 2: Get the associated ticket
-    ticket = comment.ticket
-
-    # Step 3: Check permissions
-    allowed = (
-        current_user.role == UserRole.ADMIN
-        or (
-            current_user.role == UserRole.EMPLOYEE
-            and ticket.created_by_id == current_user.id
-        )
-        or (
-            current_user.role == UserRole.ENGINEER
-            and ticket.assignee_id == current_user.id
-        )
-    )
-
-    if not allowed:
+    if not can_access_ticket(comment.ticket, current_user):
         return None, "permission_denied"
-      
-      
 
-    # Step 4: Retrieve all reactions
     reactions = db.query(CommentReaction).filter(
         CommentReaction.comment_id == comment_id
     ).order_by(
@@ -126,7 +97,6 @@ def get_comment_reactions(
         CommentReaction.id.asc()
     ).all()
 
-    # Step 5: Count reactions
     thumbs_up_count = sum(
         1 for reaction in reactions
         if reaction.reaction_type == ReactionType.THUMBS_UP
@@ -137,7 +107,6 @@ def get_comment_reactions(
         if reaction.reaction_type == ReactionType.THUMBS_DOWN
     )
 
-    # Step 6: Build response
     result = {
         "comment_id": comment_id,
         "total_reactions": len(reactions),
@@ -147,62 +116,52 @@ def get_comment_reactions(
     }
 
     return result, None
-  
-  
+
 
 def delete_reaction(
     db: Session,
     comment_id: int,
     current_user: User
 ):
-    # Step 1: Check whether the comment exists
-    comment = db.query(Comment).filter(
-        Comment.id == comment_id
-    ).first()
-
-    if comment is None:
-        return "comment_not_found"
-
-    # Step 2: Get the associated ticket
-    ticket = comment.ticket
-
-    # Step 3: Check ticket permissions
-    allowed = (
-        current_user.role == UserRole.ADMIN
-        or (
-            current_user.role == UserRole.EMPLOYEE
-            and ticket.created_by_id == current_user.id
-        )
-        or (
-            current_user.role == UserRole.ENGINEER
-            and ticket.assignee_id == current_user.id
-        )
-    )
-
-    if not allowed:
-        return "permission_denied"
-
-    # Step 4: Check ticket status
-    if ticket.status == TicketStatus.CLOSED:
-        return "ticket_closed"
-
-    # Step 5: Find the user's reaction
-    reaction = db.query(CommentReaction).filter(
-        CommentReaction.comment_id == comment_id,
-        CommentReaction.user_id == current_user.id
-    ).first()
-
-    if reaction is None:
-        return "reaction_not_found"
-
-    # Step 6: Delete the reaction
     try:
+        comment = db.query(Comment).filter(
+            Comment.id == comment_id
+        ).first()
+
+        if comment is None:
+            return "comment_not_found"
+
+        ticket = db.query(Ticket).filter(
+            Ticket.id == comment.ticket_id,
+            Ticket.is_deleted.is_(False)
+        ).with_for_update().first()
+
+        if ticket is None:
+            db.rollback()
+            return "comment_not_found"
+
+        if not can_access_ticket(ticket, current_user):
+            db.rollback()
+            return "permission_denied"
+
+        if ticket.status == TicketStatus.CLOSED:
+            db.rollback()
+            return "ticket_closed"
+
+        reaction = db.query(CommentReaction).filter(
+            CommentReaction.comment_id == comment_id,
+            CommentReaction.user_id == current_user.id
+        ).first()
+
+        if reaction is None:
+            db.rollback()
+            return "reaction_not_found"
+
         db.delete(reaction)
         db.commit()
+
+        return None
 
     except SQLAlchemyError:
         db.rollback()
         raise
-
-    return None
-

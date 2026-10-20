@@ -1,10 +1,13 @@
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.models import User
 from app.dependencies.auth import get_current_user
-from app.schemas.comment import CommentCreate, CommentResponse, CommentUpdate
+from app.schemas.comment import (
+    CommentCreate,
+    CommentResponse,
+    CommentUpdate
+)
 from app.services import comment_service
 
 
@@ -14,7 +17,7 @@ router = APIRouter(
 )
 
 my_comments_router = APIRouter(
-    prefix="/comments/me",
+    prefix="/comments",
     tags=["Comments"]
 )
 
@@ -57,8 +60,7 @@ def add_comment(
 
     return comment
 
-
-
+# VIEWING COMMENTS ON YOUR TICKET BY ADMIN, ENG, EMP 
 @router.get(
     "/{ticket_id}/comments",
     response_model=list[CommentResponse]
@@ -90,8 +92,7 @@ def get_comments(
 
     return comments
 
-
-
+# To UPDATE COMMENT
 @router.patch(
     "/comments/{comment_id}",
     response_model=CommentResponse
@@ -128,9 +129,8 @@ def edit_comment(
         )
 
     return comment
-  
-  
 
+# TO DELETE COMMENT
 @router.delete(
     "/comments/{comment_id}",
     status_code=204
@@ -165,22 +165,17 @@ def remove_comment(
         )
 
     return None
-  
-# getting all comments of a user
 
+# GET my comment
 @my_comments_router.get(
-    "/comments",
+    "/me",
     response_model=list[CommentResponse]
 )
 def get_my_comments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    comments = comment_service.get_my_comments(
+    return comment_service.get_my_comments(
         db=db,
         current_user=current_user
     )
-
-    return comments
-
-

@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-
+from datetime import datetime, timezone
 from app.services.ticket_history_service import create_history
 from app.models.models import Ticket, TicketStatus, User, UserRole
 from app.schemas.ticket import TicketCreate
@@ -68,6 +68,7 @@ def create_ticket(
 
 #     return ticket
 
+
 # 2. Admin assigns a ticket to an engineer
 def assign_ticket(
     db: Session,
@@ -75,29 +76,34 @@ def assign_ticket(
     assignee_id: int,
     current_user_id: int
 ):
-    ticket = db.query(Ticket).filter(
-        Ticket.id == ticket_id
-    ).first()
-
-    if ticket is None:
-        return None, "ticket_not_found"
-
-    engineer = db.query(User).filter(
-        User.id == assignee_id
-    ).first()
-
-    if engineer is None:
-        return None, "user_not_found"
-
-    if engineer.role != UserRole.ENGINEER:
-        return None, "not_engineer"
-
-    if ticket.assignee_id == engineer.id:
-        return None, "already_assigned"
-
-    old_assignee_id = ticket.assignee_id
-
     try:
+        ticket = db.query(Ticket).filter(
+            Ticket.id == ticket_id,
+            Ticket.is_deleted.is_(False)
+        ).with_for_update().first()
+
+        if ticket is None:
+            db.rollback()
+            return None, "ticket_not_found"
+
+        engineer = db.query(User).filter(
+            User.id == assignee_id
+        ).first()
+
+        if engineer is None:
+            db.rollback()
+            return None, "user_not_found"
+
+        if engineer.role != UserRole.ENGINEER:
+            db.rollback()
+            return None, "not_engineer"
+
+        if ticket.assignee_id == engineer.id:
+            db.rollback()
+            return None, "already_assigned"
+
+        old_assignee_id = ticket.assignee_id
+
         ticket.assignee_id = engineer.id
 
         create_history(
@@ -115,13 +121,13 @@ def assign_ticket(
         )
 
         db.commit()
+        db.refresh(ticket)
+
+        return ticket, None
 
     except SQLAlchemyError:
         db.rollback()
         raise
-
-    db.refresh(ticket)
-    return ticket, None
 
 
 # 3. get_my_created_tickets by employee
@@ -129,11 +135,21 @@ def get_my_created_tickets(
     db: Session,
     employee_id: int
 ):
-    tickets = db.query(Ticket).filter(
-        Ticket.created_by_id == employee_id
+    return db.query(Ticket).filter(
+        Ticket.created_by_id == employee_id,
+        Ticket.is_deleted.is_(False)
     ).all()
 
-    return tickets
+
+def get_assigned_tickets(
+    db: Session,
+    engineer_id: int
+):
+    return db.query(Ticket).filter(
+        Ticket.assignee_id == engineer_id,
+        Ticket.is_deleted.is_(False)
+    ).all()
+
 
 
 
@@ -154,52 +170,61 @@ def update_ticket_status(
     db: Session,
     ticket_id: int,
     new_status: TicketStatus,
-    current_user
+    current_user: User
 ):
-    ticket = db.query(Ticket).filter(
-        Ticket.id == ticket_id
-    ).first()
+    try:
+        ticket = db.query(Ticket).filter(
+            Ticket.id == ticket_id,
+            Ticket.is_deleted.is_(False)
+        ).with_for_update().first()
 
-    if ticket is None:
-        return None, "ticket_not_found"
+        if ticket is None:
+            db.rollback()
+            return None, "ticket_not_found"
 
-    # Engineer can update only their own assigned tickets
-    if current_user.role == UserRole.ENGINEER:
+        if current_user.role == UserRole.ENGINEER:
 
-        if ticket.assignee_id != current_user.id:
-            return None, "not_assigned"
+            if ticket.assignee_id != current_user.id:
+                db.rollback()
+                return None, "not_assigned"
 
-        if (
-            ticket.status == TicketStatus.OPEN
-            and new_status == TicketStatus.IN_PROGRESS
-        ):
-            pass
+            valid_transition = (
+                (
+                    ticket.status == TicketStatus.OPEN
+                    and new_status == TicketStatus.IN_PROGRESS
+                )
+                or
+                (
+                    ticket.status == TicketStatus.IN_PROGRESS
+                    and new_status == TicketStatus.RESOLVED
+                )
+            )
 
-        elif (
-            ticket.status == TicketStatus.IN_PROGRESS
-            and new_status == TicketStatus.RESOLVED
-        ):
-            pass
+            if not valid_transition:
+                db.rollback()
+                return None, "invalid_transition"
+
+        elif current_user.role == UserRole.ADMIN:
+
+            if not (
+                ticket.status == TicketStatus.RESOLVED
+                and new_status == TicketStatus.CLOSED
+            ):
+                db.rollback()
+                return None, "invalid_transition"
 
         else:
-            return None, "invalid_transition"
+            db.rollback()
+            return None, "permission_denied"
 
-    # Admin can close resolved tickets
-    elif current_user.role == UserRole.ADMIN:
-
-        if not (
-            ticket.status == TicketStatus.RESOLVED
-            and new_status == TicketStatus.CLOSED
-        ):
-            return None, "invalid_transition"
-
-    else:
-        return None, "permission_denied"
-
-    old_status = ticket.status
-
-    try:
+        old_status = ticket.status
         ticket.status = new_status
+
+        if new_status == TicketStatus.RESOLVED:
+            ticket.resolved_at = datetime.now(timezone.utc)
+
+        elif new_status == TicketStatus.CLOSED:
+            ticket.closed_at = datetime.now(timezone.utc)
 
         create_history(
             db=db,
@@ -212,16 +237,100 @@ def update_ticket_status(
         )
 
         db.commit()
+        db.refresh(ticket)
+
+        return ticket, None
 
     except SQLAlchemyError:
         db.rollback()
         raise
 
-    db.refresh(ticket)
-    return ticket, None
+
+
+
 # 6. endpoint to retrieve all tickets
 def get_all_tickets(db: Session):
-    return db.query(Ticket).order_by(Ticket.id.desc()).all()
+    return db.query(Ticket).filter(
+        Ticket.is_deleted.is_(False)
+    ).order_by(Ticket.id.desc()).all()
+
+
 # 7. Endpoint to retrieve a ticket by ID
-def get_ticket_by_id(db: Session, ticket_id: int):
-    return db.query(Ticket).filter(Ticket.id == ticket_id).first()
+def get_ticket_by_id(
+    db: Session,
+    ticket_id: int
+):
+    return db.query(Ticket).filter(
+        Ticket.id == ticket_id,
+        Ticket.is_deleted.is_(False)
+    ).first()
+
+
+
+# 8. soft deleting a ticket
+def delete_ticket(
+    db: Session,
+    ticket_id: int,
+    current_user: User
+):
+    try:
+        ticket = db.query(Ticket).filter(
+            Ticket.id == ticket_id
+        ).with_for_update().first()
+
+        if ticket is None:
+            db.rollback()
+            return None, "ticket_not_found"
+
+        if ticket.is_deleted:
+            db.rollback()
+            return None, "already_deleted"
+
+        is_admin = current_user.role == UserRole.ADMIN
+
+        is_creator = (
+            current_user.role == UserRole.EMPLOYEE
+            and ticket.created_by_id == current_user.id
+        )
+
+        if not (is_admin or is_creator):
+            db.rollback()
+            return None, "permission_denied"
+
+        if (
+            ticket.status != TicketStatus.OPEN
+            or ticket.assignee_id is not None
+        ):
+            db.rollback()
+            return None, "deletion_not_allowed"
+
+        ticket.is_deleted = True
+        ticket.deleted_at = datetime.now(timezone.utc)
+        ticket.deleted_by_id = current_user.id
+
+        create_history(
+            db=db,
+            ticket_id=ticket.id,
+            changed_by_id=current_user.id,
+            action="deleted",
+            field_name="is_deleted",
+            old_value="False",
+            new_value="True"
+        )
+
+        db.commit()
+        db.refresh(ticket)
+
+        return ticket, None
+
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+# 9. Admin retrieves all soft-deleted tickets
+def get_deleted_tickets(db: Session):
+    return db.query(Ticket).filter(
+        Ticket.is_deleted.is_(True)
+    ).order_by(Ticket.deleted_at.desc()).all()
+
