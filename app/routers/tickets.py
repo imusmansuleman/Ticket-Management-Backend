@@ -242,4 +242,3 @@ def delete_ticket(
         "message": "Ticket deleted successfully",
         "ticket_id": ticket.id
     }
-
